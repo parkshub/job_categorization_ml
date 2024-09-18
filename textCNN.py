@@ -29,7 +29,6 @@ y_hot_encoded = to_categorical(y_encoded)
 
 # splitting data into train and test
 x_train, x_test, y_train, y_test = train_test_split(X, y_hot_encoded, test_size=0.2, random_state=42)
-
 # checking unique words in x
 results = set()
 X.str.lower().str.split().apply(results.update)
@@ -81,12 +80,11 @@ model.add(Embedding(
     weights=[embedding_matrix],
     trainable=False)
 )
-
 model.add(Conv1D(256, 3, activation='relu'))
 model.add(GlobalMaxPooling1D())
 model.add(Dense(128, activation='relu'))
 model.add(Dropout(0.2))
-model.add(Dense(96, activation='softmax'))
+model.add(Dense(96, activation='sigmoid'))
 model.compile(optimizer='adam',
               loss='categorical_crossentropy',
               metrics=['accuracy'])
@@ -96,9 +94,35 @@ checkpoint = ModelCheckpoint('best_model.keras', monitor='val_loss', save_best_o
 batch_size = len(x_train)
 history = model.fit(
     x_train, y_train,
-    batch_size=batch_size,
+    # batch_size=batch_size,
     epochs=300,
     validation_data=(x_test, y_test),
-    callbacks=[checkpoint]
+    # callbacks=[checkpoint]
     # callbacks=[early_stopping, checkpoint]
 )
+
+
+
+# predicting outcomes from original data
+# X_tokenized = x_tokenizer.texts_to_sequences(X)
+# X_tokenized = pad_sequences(X_tokenized, maxlen=maxlen)
+#
+results = model.predict(x_test)
+predicted_labels_step1 = np.argmax(results, axis=1)
+actual_labels_step1 = np.argmax(y_test, axis=1)
+
+comparison_step1 = pd.DataFrame({
+    'Predicted Step 1': predicted_labels_step1,
+    'Actual Step 1': actual_labels_step1
+})
+
+# Display the comparisons side by side
+pd.set_option('display.max_colwidth', None)
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+
+print("Step 1 (Intermediate Output) Comparison:")
+# print(comparison_step1)  # Display first few rows for step 1 comparison
+
+print(len(comparison_step1[comparison_step1['Predicted Step 1'] == comparison_step1['Actual Step 1']])/len(comparison_step1))
+print(len(comparison_step1[comparison_step1['Predicted Step 1'] != comparison_step1['Actual Step 1']]))
