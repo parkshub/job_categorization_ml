@@ -10,7 +10,7 @@ from sklearn.model_selection import train_test_split
 from keras.callbacks import EarlyStopping
 from tensorflow.keras.callbacks import ModelCheckpoint
 
-df = pd.read_csv('job_title_industry.csv', usecols=['WOW Job title', 'WOW Industry', 'New Job Category', 'New Industry Category'])
+df = pd.read_csv('job_title_industry_draft1.csv', usecols=['WOW Job title', 'WOW Industry', 'New Job Category', 'New Industry Category'])
 df.columns
 
 df.dropna(subset=['WOW Job title','New Job Category'], inplace=True)

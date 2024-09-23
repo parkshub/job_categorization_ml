@@ -15,7 +15,6 @@ from keras.callbacks import EarlyStopping
 from tensorflow.keras.callbacks import ModelCheckpoint
 
 df = pd.read_csv('job_title_industry.csv', usecols=['WOW Job title', 'WOW Industry', 'New Job Category', 'New Industry Category'])
-df.columns
 df.dropna(subset=['WOW Job title','New Job Category'], inplace=True)
 
 X = df['WOW Job title']
@@ -35,23 +34,25 @@ y_encoded_model2 = label_encoder_model2.fit_transform(y_model2)
 y_hot_encoded_model2 = to_categorical(y_encoded_model2)
 
 # splitting data into train and test
-x_train, x_test, y1_train, y1_test, y2_train, y2_test = train_test_split(X, y_hot_encoded_model1, y_hot_encoded_model2, test_size=0.2, random_state=42)
-# checking unique words in x
-results = set()
-X.str.lower().str.split().apply(results.update)
-print(len(results))
+x_train_raw, x_test_raw, y1_train, y1_test, y2_train, y2_test = train_test_split(X, y_hot_encoded_model1, y_hot_encoded_model2, test_size=0.2, random_state=42)
+# # checking unique words in x
+# results = set()
+# X.str.lower().str.split().apply(results.update)
+# print(len(results))
 
 # tokenizing
 x_tokenizer = Tokenizer(oov_token="<OOV>")
-x_tokenizer.fit_on_texts(x_train)
-x_train = x_tokenizer.texts_to_sequences(x_train)
-x_test = x_tokenizer.texts_to_sequences(x_test)
+x_tokenizer.fit_on_texts(x_train_raw)
+x_train = x_tokenizer.texts_to_sequences(x_train_raw)
+x_test = x_tokenizer.texts_to_sequences(x_test_raw)
 
 word_index = x_tokenizer.word_index
 maxlen = max(len(seq) for seq in x_train)
-word_index = x_tokenizer.word_index
-vocab_size = len(word_index) + 1  # Adding 1 because of reserved 0 index
+vocab_size = len(word_index) + 1
 embedding_dim = 50
+
+print(word_index, '\n', maxlen, '\n', vocab_size)
+
 
 # padding x
 x_train = pad_sequences(x_train, maxlen=maxlen)
@@ -67,8 +68,6 @@ with open(glove_file, 'r', encoding='utf-8') as f:
         word = values[0]
         vector = np.asarray(values[1:], dtype='float32')
         embeddings_index[word] = vector
-
-vocab_size = len(word_index) + 1
 
 embedding_matrix = np.zeros((vocab_size, embedding_dim))
 
@@ -90,11 +89,11 @@ model1.add(Conv1D(256, 3, activation='relu'))
 model1.add(GlobalMaxPooling1D())
 model1.add(Dense(128, activation='relu'))
 model1.add(Dropout(0.2))
-model1.add(Dense(96, activation='sigmoid'))
+model1.add(Dense(93, activation='sigmoid'))
 
 # todo consider adding more data to the input here like resnet
 model2 = Sequential()
-model2.add(Dense(128, activation='relu'))  # Use an intermediate layer to process output from model1
+model2.add(Dense(128, activation='relu'))
 model2.add(Dense(39, activation='sigmoid'))
 
 input_layer = Input(shape=(18,))
@@ -115,7 +114,6 @@ combined_model.fit(
     callbacks= [early_stopping, checkpoint]
 )
 
-
 predictions_step1, predictions_step2 = combined_model.predict(x_test)
 predicted_labels_step1 = np.argmax(predictions_step1, axis=1)
 predicted_labels_step2 = np.argmax(predictions_step2, axis=1)
@@ -123,57 +121,54 @@ predicted_labels_step2 = np.argmax(predictions_step2, axis=1)
 actual_labels_step1 = np.argmax(y1_test, axis=1)
 actual_labels_step2 = np.argmax(y2_test, axis=1)
 
+step1_results = predicted_labels_step1 == actual_labels_step1
+step1_results = np.unique(step1_results, return_counts=True)
+
+step2_results = predicted_labels_step2 == actual_labels_step2
+step2_results = np.unique(step2_results, return_counts=True)
 
 #-----------------------------------------------------------------#
 # accuracy analysis only considering final output from both models
+print('-----------------Step 1 Job Title Results-----------------')
+print(step1_results[1][1]/(step1_results[1][0] + step1_results[1][1]))
 
+print('-----------------Step 2 Industry Results-----------------')
+print(step2_results[1][1]/(step2_results[1][0] + step2_results[1][1]))
 
-comparison_step1 = pd.DataFrame({
-    'Predicted Step 1': predicted_labels_step1,
-    'Actual Step 1': actual_labels_step1
+label_mapping_model1 = dict(zip(range(len(label_encoder_model1.classes_)), label_encoder_model1.classes_))
+
+step1_df = pd.DataFrame({
+    "input": x_test_raw,
+    "pred": predicted_labels_step1,
+    "actual": actual_labels_step1
 })
 
-comparison_step2 = pd.DataFrame({
-    'Predicted Step 2': predicted_labels_step2,
-    'Actual Step 2': actual_labels_step2
-})
+step1_df[['pred', 'actual']] = step1_df[['pred', 'actual']].replace(label_mapping_model1)
+step1_df_incorrect = step1_df[step1_df["pred"] != step1_df['actual']].sort_values(by="pred")
+step1_df_incorrect_counts = step1_df_incorrect[['pred', 'actual']].value_counts()
+step1_df_incorrect_counts = step1_df_incorrect_counts.reset_index()
 
-
-pd.set_option('display.max_colwidth', None)
-pd.set_option('display.max_rows', None)
-pd.set_option('display.max_columns', None)
-
-print("Step 1 (Intermediate Output) Comparison:")
-print(len(comparison_step1[comparison_step1['Predicted Step 1'] == comparison_step1['Actual Step 1']])/len(comparison_step1))
-print(len(comparison_step1[comparison_step1['Predicted Step 1'] != comparison_step1['Actual Step 1']]))
-
-print("\nStep 2 (Final Output) Comparison:")
-print(len(comparison_step2[comparison_step2['Predicted Step 2'] == comparison_step2['Actual Step 2']])/len(comparison_step2))
-print(len(comparison_step2[comparison_step2['Predicted Step 2'] != comparison_step2['Actual Step 2']])/len(comparison_step2))
 
 
 #-----------------------------------------------------------------#
-# accuracy analysis considering the top 3 outputs from both models
+# accuracy analysis considering the top 3 outputs from first model
 
 top3_pred_step1 = np.argsort(predictions_step1, axis=1)[:, -3:]
-    # Reverse the order to have the highest first
 top3_pred_step1 = np.flip(top3_pred_step1, axis=1)
 
-comparison_step1 = pd.DataFrame({
-    'Top 1 Prediction': top3_pred_step1[:, 2],  # Top 1 (largest probability)
-    'Top 2 Prediction': top3_pred_step1[:, 1],  # Top 2
-    'Top 3 Prediction': top3_pred_step1[:, 0],  # Top 3
+comparison_df = pd.DataFrame({
+    'Top 1 Prediction': top3_pred_step1[:, 2],
+    'Top 2 Prediction': top3_pred_step1[:, 1],
+    'Top 3 Prediction': top3_pred_step1[:, 0],
     'Actual Label': actual_labels_step1
 })
 
-def check_match(row):
+comparison_df = comparison_df.replace(label_mapping_model1)
+
+def check_match_on_all(row):
     return row['Actual Label'] in [row['Top 1 Prediction'], row['Top 2 Prediction'], row['Top 3 Prediction']]
 
-# Add a new column to indicate if the actual label matches any of the top 3 predictions
-comparison_step1['Match'] = comparison_step1.apply(check_match, axis=1)
-(comparison_step1['Match'] == True).value_counts()
+def check_match_on_top1(row):
+    return row['Actual Label'] == row['Top 1 Prediction']
 
-predicted_labels_step2 = np.argmax(predictions_step2, axis=1)
-
-actual_labels_step1 = np.argmax(y1_test, axis=1)
-actual_labels_step2 = np.argmax(y2_test, axis=1)
+comparison_df['Match'] = comparison_df.apply(check_match_on_all, axis=1)
