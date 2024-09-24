@@ -172,7 +172,7 @@ class Evaluation:
 
 
 if __name__ == "__main__":
-    split = False
+    split = True
     # Data Preprocessing
     # preprocessor = DataPreprocessor(filepath='job_title_industry.csv')
     preprocessor = DataPreprocessor(filepath='job_title_industry.xlsx')

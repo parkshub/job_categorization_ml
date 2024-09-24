@@ -2,3 +2,6 @@
 .idea/
 *.csv
 glove.*.txt
+glove.6B.zip
+*.xlsx
+scratch.py
