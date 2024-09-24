@@ -13,6 +13,7 @@ from tensorflow.keras.callbacks import ModelCheckpoint
 from datetime import date
 
 
+
 class DataPreprocessor:
     def __init__(self, filepath, maxlen=None):
         self.filepath = filepath
@@ -25,10 +26,23 @@ class DataPreprocessor:
         self.label_encoder_y1 = None
         self.label_encoder_y2 = None
 
-    def load_data(self):
-        df = pd.read_csv(self.filepath,
-                         usecols=['WOW Job title', 'WOW Industry', 'New Job Category', 'New Industry Category'])
+    def load_data(self, split=False):
+        # df = pd.read_csv(self.filepath,
+        #                  usecols=['WOW Job title', 'WOW Industry', 'New Job Category', 'New Industry Category'])
+
+        df = pd.read_excel(self.filepath, sheet_name='Andrew_Final_jobtitle+industry', engine='openpyxl')
+
+
         df.dropna(subset=['WOW Job title', 'New Job Category'], inplace=True)
+
+        if split == True:
+            df = df[~df['WOW Job title'].str.contains('/')]
+            df = df[~df['WOW Job title'].str.contains('&')]
+            df = df[~df['WOW Job title'].str.contains(',')]
+            df = df[~df['WOW Job title'].str.contains(' and ')]
+            print(len(df))
+            return df
+
         df['WOW Job title'] = df['WOW Job title'].apply(
             lambda x: x.replace(' / ', ',').replace(' /', ',').replace('/', ','))
         return df
@@ -86,7 +100,7 @@ class JobClassificationModel:
         self.maxlen = maxlen
         self.model = None
 
-    def build_model(self):
+    def build_model(self, y_tr1_shape, y_tr2_shape):
         # Model 1
         model1 = Sequential()
         model1.add(Embedding(
@@ -100,16 +114,21 @@ class JobClassificationModel:
         model1.add(GlobalMaxPooling1D())
         model1.add(Dense(128, activation='relu'))
         model1.add(Dropout(0.2))
-        model1.add(Dense(93, activation='sigmoid'))
+        # model1.add(Dense(93, activation='sigmoid'))
+        model1.add(Dense(y_tr1_shape, activation='sigmoid'))
+        # todo change above to x_t1 or x_tr1 shape
 
         # Model 2
         model2 = Sequential()
         model2.add(Dense(128, activation='relu'))
-        model2.add(Dense(39, activation='sigmoid'))
+        model2.add(Dense(y_tr2_shape, activation='sigmoid'))
+        # todo change above to y_t2 or y_tr2 shape
 
         # Combine Models
+        print('this is self.maxlen', self.maxlen)
         input_layer = Input(shape=(self.maxlen,))
         interm_output = model1(input_layer)
+        print('this is iterm output', interm_output.shape)
         final_output = model2(interm_output)
 
         self.model = Model(inputs=input_layer, outputs=[interm_output, final_output])
@@ -117,10 +136,11 @@ class JobClassificationModel:
                            metrics=['accuracy', 'accuracy'])
         return self.model
 
-    def train(self, x_tr, y_tr1, y_tr2, x_t, y_t1, y_t2):
+    def train(self, x_tr, y_tr1, y_tr2, x_t, y_t1, y_t2, split=False):
+        name_prefix = ["", "split_"]
         today = str(date.today()).replace('-', '_')
         early_stopping = EarlyStopping(monitor='val_loss', patience=50, restore_best_weights=True)
-        checkpoint = ModelCheckpoint(f'textCNN_{today}.keras', monitor='val_loss', save_best_only=True)
+        checkpoint = ModelCheckpoint(f'{name_prefix[split]}textCNN_{today}.keras', monitor='val_loss', save_best_only=True)
         self.model.fit(
             x_tr,
             [y_tr1, y_tr2],
@@ -152,9 +172,12 @@ class Evaluation:
 
 
 if __name__ == "__main__":
+    split = False
     # Data Preprocessing
-    preprocessor = DataPreprocessor(filepath='job_title_industry.csv')
-    df = preprocessor.load_data()
+    # preprocessor = DataPreprocessor(filepath='job_title_industry.csv')
+    preprocessor = DataPreprocessor(filepath='job_title_industry.xlsx')
+    df = preprocessor.load_data(split=split)
+    # df = preprocessor.load_data()
 
     y_hot_encoded_model1, label_encoder_model1 = preprocessor.encode_labels(df, 'New Job Category')
     y_hot_encoded_model2, label_encoder_model2 = preprocessor.encode_labels(df, 'New Industry Category')
@@ -174,8 +197,8 @@ if __name__ == "__main__":
 
     # Building and training the model
     model_builder = JobClassificationModel(preprocessor.vocab_size, embedding_matrix, preprocessor.maxlen)
-    model = model_builder.build_model()
-    model_builder.train(x_train, y1_train, y2_train, x_test, y1_test, y2_test)
+    model = model_builder.build_model(y1_train.shape[1], y2_train.shape[1])
+    model_builder.train(x_train, y1_train, y2_train, x_test, y1_test, y2_test, split)
 
     # Evaluate the model
     predictions_step1, predictions_step2 = model.predict(x_test)
@@ -190,3 +213,24 @@ if __name__ == "__main__":
     # Top-3 Accuracy for step1 predictions
     top3_accuracy_step1 = Evaluation.top_k_accuracy(predictions_step1, np.argmax(y1_test, axis=1), k=3)
     print(f'Top-3 Job Category Accuracy: {top3_accuracy_step1}')
+
+
+    # todo here
+    label_mapping_model1 = dict(zip(range(len(label_encoder_model1.classes_)), label_encoder_model1.classes_))
+
+    predicted_labels_step1 = np.argmax(predictions_step1, axis=1)
+    predicted_labels_step2 = np.argmax(predictions_step2, axis=1)
+
+    actual_labels_step1 = np.argmax(y1_test, axis=1)
+    actual_labels_step2 = np.argmax(y2_test, axis=1)
+
+    step1_df = pd.DataFrame({
+        "input": x_test_raw,
+        "pred": predicted_labels_step1,
+        "actual": actual_labels_step1
+    })
+
+    step1_df[['pred', 'actual']] = step1_df[['pred', 'actual']].replace(label_mapping_model1)
+    step1_df_incorrect = step1_df[step1_df["pred"] != step1_df['actual']].sort_values(by="pred")
+    step1_df_incorrect_counts = step1_df_incorrect[['pred', 'actual']].value_counts()
+    step1_df_incorrect_counts = step1_df_incorrect_counts.reset_index()
