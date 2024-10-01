@@ -12,7 +12,8 @@ from keras.callbacks import EarlyStopping
 from tensorflow.keras.callbacks import ModelCheckpoint
 from datetime import date
 from sklearn.preprocessing import MultiLabelBinarizer
-
+from ast import literal_eval
+import h5py
 
 class DataPreprocessor:
     def __init__(self, filepath, maxlen=None):
@@ -30,39 +31,53 @@ class DataPreprocessor:
         # df = pd.read_csv(self.filepath,
         #                  usecols=['WOW Job title', 'WOW Industry', 'New Job Category', 'New Industry Category'])
 
-        df = pd.read_excel(self.filepath, sheet_name='Andrew_Final_jobtitle+industry', engine='openpyxl')
+        # df = pd.read_excel(self.filepath, sheet_name='Multi_Andrew_Final_jobtitle+ind', engine='openpyxl')
+        df = pd.read_excel('assets/job_title_industry.xlsx', sheet_name='Multi_Andrew_Final_jobtitle+ind', engine='openpyxl')
 
-
-        df.dropna(subset=['WOW Job title', 'New Job Category'], inplace=True)
+        df.dropna(subset=['WOW Job title', 'New Job Category', 'New Industry Category'], inplace=True)
+        df = df[['WOW Job title', 'New Job Category', 'New Industry Category']]
 
         if split == True:
             df = df[~df['WOW Job title'].str.contains('/')]
             df = df[~df['WOW Job title'].str.contains('&')]
             df = df[~df['WOW Job title'].str.contains(',')]
             df = df[~df['WOW Job title'].str.contains(' and ')]
-            print(len(df))
-            return df
 
-        df['WOW Job title'] = df['WOW Job title'].apply(
-            lambda x: x.replace(' / ', ',').replace(' /', ',').replace('/', ','))
+        df['New Job Category'] = df['New Job Category'].apply(lambda x: x.split(','))
+        df['New Job Category'] = df['New Job Category'].apply(lambda x: [item.strip() for item in x])
+        # df['New Job Category'] = df['New Job Category'].apply(lambda x: literal_eval(x))
+
+        # getting rid of categories with less than 2 since we want to use stratify
+        value_counts = df['New Job Category'].value_counts()
+        print(value_counts)
+        classes_to_remove = value_counts[value_counts < 2].index
+
+        # Filter out rows with those classes
+        df = df[~df['New Job Category'].isin(classes_to_remove)]
+
+
+
         return df
 
     def encode_labels(self, df, col_name):
+        y_encoded = ''
+
         if col_name == 'New Job Category':
-            # Split the string labels into lists and apply MultiLabelBinarizer
-            df[col_name] = df[col_name].apply(lambda x: x.split(', '))
+            df[col_name] = df[col_name].apply(lambda x: x if isinstance(x, list) else literal_eval(x))
             self.mlb_y1 = MultiLabelBinarizer()
             y_encoded = self.mlb_y1.fit_transform(df[col_name])
+
         else:
-            # Use LabelEncoder for single-class labels (New Industry Category)
+            # label encoder for single lables
             self.label_encoder_y2 = LabelEncoder()
             y_encoded = self.label_encoder_y2.fit_transform(df[col_name])
-            # One-hot encode the single-class labels
+            # one-hot encoding
             y_encoded = to_categorical(y_encoded)
 
-        return y_encoded
+        return y_encoded, self.label_encoder_y2
 
     def tokenize_and_pad(self, X):
+
         if not self.tokenizer:
             self.tokenizer = Tokenizer(oov_token="<OOV>")
             self.tokenizer.fit_on_texts(X)
@@ -116,15 +131,12 @@ class JobClassificationModel:
         model1.add(GlobalMaxPooling1D())
         model1.add(Dense(128, activation='relu'))
         model1.add(Dropout(0.2))
-        # model1.add(Dense(93, activation='sigmoid'))
         model1.add(Dense(y_tr1_shape, activation='sigmoid'))
-        # todo change above to x_t1 or x_tr1 shape
 
         # Model 2
         model2 = Sequential()
         model2.add(Dense(128, activation='relu'))
         model2.add(Dense(y_tr2_shape, activation='sigmoid'))
-        # todo change above to y_t2 or y_tr2 shape
 
         # Combine Models
         print('this is self.maxlen', self.maxlen)
@@ -141,8 +153,19 @@ class JobClassificationModel:
     def train(self, x_tr, y_tr1, y_tr2, x_t, y_t1, y_t2, split=False):
         name_prefix = ["", "split_"]
         today = str(date.today()).replace('-', '_')
-        early_stopping = EarlyStopping(monitor='val_loss', patience=50, restore_best_weights=True)
-        checkpoint = ModelCheckpoint(f'{name_prefix[split]}textCNN_{today}_multilevel.keras', monitor='val_loss', save_best_only=True)
+
+        early_stopping = EarlyStopping(
+            monitor='val_loss',
+            patience=50,
+            restore_best_weights=True
+        )
+
+        checkpoint = ModelCheckpoint(
+            f'{name_prefix[split]}textCNN_{today}_multilevel.keras',
+            monitor='val_loss',
+            save_best_only=True,
+        )
+
         self.model.fit(
             x_tr,
             [y_tr1, y_tr2],
@@ -154,7 +177,6 @@ class JobClassificationModel:
     def evaluate(self, x_t, y_t1, y_t2):
         results = self.model.evaluate(x_t, [y_t1, y_t2])
         print(f"Evaluation results: {results}")
-
 
 class Evaluation:
     @staticmethod
@@ -175,51 +197,54 @@ class Evaluation:
 
 if __name__ == "__main__":
     split = False
-    # Data Preprocessing
-    # preprocessor = DataPreprocessor(filepath='job_title_industry.csv')
+
     preprocessor = DataPreprocessor(filepath='assets/job_title_industry.xlsx')
-    df = preprocessor.load_data(split=split)
-    # df = preprocessor.load_data()
+    df = preprocessor.load_data()
 
     y_hot_encoded_model1, label_encoder_model1 = preprocessor.encode_labels(df, 'New Job Category')
     y_hot_encoded_model2, label_encoder_model2 = preprocessor.encode_labels(df, 'New Industry Category')
 
-    # Splitting data into train and test
-    x_train_raw, x_test_raw, y1_train, y1_test, y2_train, y2_test = train_test_split(df['WOW Job title'],
-                                                                                     y_hot_encoded_model1,
-                                                                                     y_hot_encoded_model2,
-                                                                                     test_size=0.2, random_state=42)
+    x_train_raw, x_test_raw, y1_train, y1_test, y2_train, y2_test = train_test_split(
+        df['WOW Job title'],
+        y_hot_encoded_model1,
+        y_hot_encoded_model2,
+        test_size=0.2,
+        stratify=df["New Job Category"].values,
+    )
 
-    # Tokenizing and padding
+    print(x_train_raw.shape, x_test_raw.shape, y1_train.shape, y2_train.shape, y2_test.shape)
+    print(x_train_raw)
+
+    # tokenizing and padding
     x_train = preprocessor.tokenize_and_pad(x_train_raw)
     x_test = preprocessor.tokenize_and_pad(x_test_raw)
 
-    # Loading GloVe embeddings
-    embedding_matrix = preprocessor.load_glove_embeddings('glove.6B.50d.txt')
+    # glove embedding
+    embedding_matrix = preprocessor.load_glove_embeddings('assets/glove.6B.50d.txt')
 
-    # Building and training the model
+    # build and train
     model_builder = JobClassificationModel(preprocessor.vocab_size, embedding_matrix, preprocessor.maxlen)
     model = model_builder.build_model(y1_train.shape[1], y2_train.shape[1])
     model_builder.train(x_train, y1_train, y2_train, x_test, y1_test, y2_test, split)
 
-    # Evaluate the model
+    # predict
     predictions_step1, predictions_step2 = model.predict(x_test)
 
-    # Accuracy analysis
+    # analysis
     step1_accuracy = Evaluation.accuracy_analysis(predictions_step1, y1_test)
     step2_accuracy = Evaluation.accuracy_analysis(predictions_step2, y2_test)
 
     print(f'Step 1 Job Category Accuracy: {step1_accuracy}')
     print(f'Step 2 Industry Accuracy: {step2_accuracy}')
 
-    # Top-3 Accuracy for step1 predictions
+    # top 3 accuracy
     top3_accuracy_step1 = Evaluation.top_k_accuracy(predictions_step1, np.argmax(y1_test, axis=1), k=3)
     print(f'Top-3 Job Category Accuracy: {top3_accuracy_step1}')
 
-
-    # todo here
-    label_mapping_model1 = dict(zip(range(len(label_encoder_model1.classes_)), label_encoder_model1.classes_))
-
+    # todo i think theres something wrong with this part
+    # todo i think theres something wrong with this part
+    # todo i think theres something wrong with this part
+    label_mapping_model1 = dict(zip(range(len(preprocessor.mlb_y1.classes_)), preprocessor.mlb_y1.classes_))
     predicted_labels_step1 = np.argmax(predictions_step1, axis=1)
     predicted_labels_step2 = np.argmax(predictions_step2, axis=1)
 

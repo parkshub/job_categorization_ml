@@ -32,8 +32,8 @@ class DataPreprocessor:
 
         df = pd.read_excel(self.filepath, sheet_name='Andrew_Final_jobtitle+industry', engine='openpyxl')
 
-
-        df.dropna(subset=['WOW Job title', 'New Job Category'], inplace=True)
+        df.dropna(subset=['WOW Job title', 'New Job Category', 'New Industry Category'], inplace=True)
+        df = df[['WOW Job title', 'New Job Category', 'New Industry Category']]
 
         if split == True:
             df = df[~df['WOW Job title'].str.contains('/')]
@@ -173,49 +173,42 @@ class Evaluation:
 
 if __name__ == "__main__":
     split = True
-    # Data Preprocessing
-    # preprocessor = DataPreprocessor(filepath='job_title_industry.csv')
+
     preprocessor = DataPreprocessor(filepath='job_title_industry.xlsx')
     df = preprocessor.load_data(split=split)
-    # df = preprocessor.load_data()
 
     y_hot_encoded_model1, label_encoder_model1 = preprocessor.encode_labels(df, 'New Job Category')
     y_hot_encoded_model2, label_encoder_model2 = preprocessor.encode_labels(df, 'New Industry Category')
 
-    # Splitting data into train and test
     x_train_raw, x_test_raw, y1_train, y1_test, y2_train, y2_test = train_test_split(df['WOW Job title'],
-                                                                                     y_hot_encoded_model1,
-                                                                                     y_hot_encoded_model2,
+                                                                                     y_hot_encoded_model1,                                                                                     y_hot_encoded_model2,
                                                                                      test_size=0.2, random_state=42)
-
-    # Tokenizing and padding
+    # tokenizing and padding
     x_train = preprocessor.tokenize_and_pad(x_train_raw)
     x_test = preprocessor.tokenize_and_pad(x_test_raw)
 
-    # Loading GloVe embeddings
+    # glove embedding
     embedding_matrix = preprocessor.load_glove_embeddings('glove.6B.50d.txt')
 
-    # Building and training the model
+    # build and train
     model_builder = JobClassificationModel(preprocessor.vocab_size, embedding_matrix, preprocessor.maxlen)
     model = model_builder.build_model(y1_train.shape[1], y2_train.shape[1])
     model_builder.train(x_train, y1_train, y2_train, x_test, y1_test, y2_test, split)
 
-    # Evaluate the model
+    # predict
     predictions_step1, predictions_step2 = model.predict(x_test)
 
-    # Accuracy analysis
+    # analysis
     step1_accuracy = Evaluation.accuracy_analysis(predictions_step1, y1_test)
     step2_accuracy = Evaluation.accuracy_analysis(predictions_step2, y2_test)
 
     print(f'Step 1 Job Category Accuracy: {step1_accuracy}')
     print(f'Step 2 Industry Accuracy: {step2_accuracy}')
 
-    # Top-3 Accuracy for step1 predictions
+    # top 3 accuracy
     top3_accuracy_step1 = Evaluation.top_k_accuracy(predictions_step1, np.argmax(y1_test, axis=1), k=3)
     print(f'Top-3 Job Category Accuracy: {top3_accuracy_step1}')
 
-
-    # todo here
     label_mapping_model1 = dict(zip(range(len(label_encoder_model1.classes_)), label_encoder_model1.classes_))
 
     predicted_labels_step1 = np.argmax(predictions_step1, axis=1)
