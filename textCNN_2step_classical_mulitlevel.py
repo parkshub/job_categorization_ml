@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import tensorflow as tf
+import keras
 from keras.models import Sequential, Model
 from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.utils import to_categorical
@@ -14,6 +15,9 @@ from datetime import date
 from sklearn.preprocessing import MultiLabelBinarizer
 from ast import literal_eval
 import h5py
+from keras.regularizers import l2
+
+# todo multilevel and single level model is pretty much the same, but might make labeling much easier and the more we have the more accurate it might become
 
 class DataPreprocessor:
     def __init__(self, filepath, maxlen=None):
@@ -47,12 +51,10 @@ class DataPreprocessor:
         df['New Job Category'] = df['New Job Category'].apply(lambda x: [item.strip() for item in x])
         # df['New Job Category'] = df['New Job Category'].apply(lambda x: literal_eval(x))
 
-        # getting rid of categories with less than 2 since we want to use stratify
+        # filtering rows of df with less than 2 rows so we can stratify
         value_counts = df['New Job Category'].value_counts()
         print(value_counts)
         classes_to_remove = value_counts[value_counts < 2].index
-
-        # Filter out rows with those classes
         df = df[~df['New Job Category'].isin(classes_to_remove)]
 
 
@@ -118,7 +120,7 @@ class JobClassificationModel:
         self.model = None
 
     def build_model(self, y_tr1_shape, y_tr2_shape):
-        # Model 1
+        # model 1
         model1 = Sequential()
         model1.add(Embedding(
             input_dim=self.vocab_size,
@@ -126,27 +128,29 @@ class JobClassificationModel:
             weights=[self.embedding_matrix],
             input_length=self.maxlen,
             trainable=False)
+
         )
-        model1.add(Conv1D(256, 3, activation='relu'))
+        model1.add(Conv1D(128, 3, activation='relu'))
+        # model1.add(Conv1D(256, 3, activation='relu'))
         model1.add(GlobalMaxPooling1D())
-        model1.add(Dense(128, activation='relu'))
-        model1.add(Dropout(0.2))
+        model1.add(Dense(64, activation='relu', kernel_regularizer=l2(0.01)))
+        # model1.add(Dropout(0.2))
+        model1.add(Dropout(0.4))
         model1.add(Dense(y_tr1_shape, activation='sigmoid'))
 
-        # Model 2
+        # model 2
         model2 = Sequential()
         model2.add(Dense(128, activation='relu'))
         model2.add(Dense(y_tr2_shape, activation='sigmoid'))
 
-        # Combine Models
-        print('this is self.maxlen', self.maxlen)
+        # combining models
         input_layer = Input(shape=(self.maxlen,))
         interm_output = model1(input_layer)
         print('this is iterm output', interm_output.shape)
         final_output = model2(interm_output)
 
         self.model = Model(inputs=input_layer, outputs=[interm_output, final_output])
-        self.model.compile(optimizer='adam', loss=['categorical_crossentropy', 'categorical_crossentropy'],
+        self.model.compile(optimizer='adam', loss=[keras.losses.CategoricalFocalCrossentropy(), 'categorical_crossentropy'],
                            metrics=['accuracy', 'accuracy'])
         return self.model
 
@@ -227,6 +231,11 @@ if __name__ == "__main__":
     model = model_builder.build_model(y1_train.shape[1], y2_train.shape[1])
     model_builder.train(x_train, y1_train, y2_train, x_test, y1_test, y2_test, split)
 
+
+    #-------------------------#
+    # Evaluating
+    #-------------------------#
+
     # predict
     predictions_step1, predictions_step2 = model.predict(x_test)
 
@@ -241,23 +250,91 @@ if __name__ == "__main__":
     top3_accuracy_step1 = Evaluation.top_k_accuracy(predictions_step1, np.argmax(y1_test, axis=1), k=3)
     print(f'Top-3 Job Category Accuracy: {top3_accuracy_step1}')
 
-    # todo i think theres something wrong with this part
-    # todo i think theres something wrong with this part
-    # todo i think theres something wrong with this part
-    label_mapping_model1 = dict(zip(range(len(preprocessor.mlb_y1.classes_)), preprocessor.mlb_y1.classes_))
-    predicted_labels_step1 = np.argmax(predictions_step1, axis=1)
-    predicted_labels_step2 = np.argmax(predictions_step2, axis=1)
+    #-------------------------#
+    # Predicted outcome top 1, top 3, threshold
+    #-------------------------#
 
-    actual_labels_step1 = np.argmax(y1_test, axis=1)
+    label_mapping_model1 = dict(zip(range(len(preprocessor.mlb_y1.classes_)), preprocessor.mlb_y1.classes_))
+
+    # getting indices for top 1 and 3
+    top_1_indices = np.argsort(predictions_step1, axis=1)[:, -1:]
+    top_3_indices = np.argsort(predictions_step1, axis=1)[:, -3:]
+
+    predicted_labels_step1_top_1 = np.zeros_like(predictions_step1)
+    predicted_labels_step1_top_3 = np.zeros_like(predictions_step1)
+
+    for i, indices in enumerate(top_1_indices):
+        predicted_labels_step1_top_1[i, indices] = 1
+
+    for i, indices in enumerate(top_3_indices):
+        predicted_labels_step1_top_3[i, indices] = 1
+
+    predicted_labels_step1_top_1_readable = [
+        [label_mapping_model1[idx] for idx, value in enumerate(pred) if value == 1]
+        for pred in predicted_labels_step1_top_1
+    ]
+
+    predicted_labels_step1_top_3_readable = [
+        [label_mapping_model1[idx] for idx, value in enumerate(pred) if value == 1]
+        for pred in predicted_labels_step1_top_3
+    ]
+
+    actual_labels_step1_readable = [
+        [label_mapping_model1[idx] for idx, value in enumerate(true) if value == 1]
+        for true in y1_test
+    ]
+
+    # creating dataframes for top 1 and 3
+    step1_df_top_1 = pd.DataFrame({
+        "input": x_test_raw,
+        "top_1_predicted_labels": predicted_labels_step1_top_1_readable,
+        "actual_labels": actual_labels_step1_readable
+    })
+
+    step1_df_top_3 = pd.DataFrame({
+        "input": x_test_raw,
+        "top_3_predicted_labels": predicted_labels_step1_top_3_readable,
+        "actual_labels": actual_labels_step1_readable
+    })
+
+    # instead of top 1 and 3 using threshold, same process
+    threshold = 0.5
+    predicted_labels_step1 = (predictions_step1 >= threshold).astype(int)
+
+    predicted_labels_step1_readable = [
+        [label_mapping_model1[idx] for idx, value in enumerate(pred) if value == 1]
+        for pred in predicted_labels_step1
+    ]
+
+    actual_labels_step1_readable = [
+        [label_mapping_model1[idx] for idx, value in enumerate(true) if value == 1]
+        for true in y1_test
+    ]
+
     actual_labels_step2 = np.argmax(y2_test, axis=1)
 
     step1_df = pd.DataFrame({
         "input": x_test_raw,
-        "pred": predicted_labels_step1,
-        "actual": actual_labels_step1
+        "predicted_labels": predicted_labels_step1_readable,
+        "actual_labels": actual_labels_step1_readable
     })
 
-    step1_df[['pred', 'actual']] = step1_df[['pred', 'actual']].replace(label_mapping_model1)
-    step1_df_incorrect = step1_df[step1_df["pred"] != step1_df['actual']].sort_values(by="pred")
-    step1_df_incorrect_counts = step1_df_incorrect[['pred', 'actual']].value_counts()
-    step1_df_incorrect_counts = step1_df_incorrect_counts.reset_index()
+
+
+#--------------------------------#
+# Step 2 predictions and labels
+#--------------------------------#
+
+predicted_labels_step2 = np.argmax(predictions_step2, axis=1)
+
+label_mapping_model2 = dict(zip(range(len(preprocessor.label_encoder_y2.classes_)), preprocessor.label_encoder_y2.classes_))
+
+predicted_labels_step2_readable = [
+    label_mapping_model2[idx] for idx in predicted_labels_step2
+]
+
+step2_df = pd.DataFrame({
+    "input": x_test_raw,
+    "top_1_predicted_label": predicted_labels_step2_readable,
+    "actual_label": [label_mapping_model2[idx] for idx in np.argmax(y2_test, axis=1)]
+})
