@@ -33,6 +33,8 @@ class DataPreprocessor:
         self.word_index = None
         self.label_encoder_y1 = None  # MultiLabelBinarizer for 'New Job Category'
         self.label_encoder_y2 = None  # LabelEncoder for 'New Industry Category'
+        self.today = str(date.today()).replace("-", "_")
+
 
     def load_data(self, split=False):
         # df = pd.read_csv(self.filepath,
@@ -81,7 +83,7 @@ class DataPreprocessor:
             self.label_encoder_y1 = MultiLabelBinarizer()
             y_encoded = self.label_encoder_y1.fit_transform(df[col_name])
 
-            with open('label_encoder_y1.pkl', 'wb') as f:
+            with open(f'label_encoder_y1_{self.today}.pkl', 'wb') as f:
                 pickle.dump(self.label_encoder_y1, f)
 
         else:
@@ -91,7 +93,7 @@ class DataPreprocessor:
             # one-hot encoding
             y_encoded = to_categorical(y_encoded)
 
-            with open('label_encoder_y2.pkl', 'wb') as f:
+            with open(f'label_encoder_y2_{self.today}.pkl', 'wb') as f:
                 pickle.dump(self.label_encoder_y2, f)
 
         return y_encoded, self.label_encoder_y2
@@ -103,10 +105,16 @@ class DataPreprocessor:
             self.tokenizer.fit_on_texts(X)
             self.word_index = self.tokenizer.word_index
 
+            with open(f'input_tokenizer_x_{self.today}.pkl', 'wb') as f:
+                pickle.dump(self.tokenizer, f)
+
         sequences = self.tokenizer.texts_to_sequences(X)
 
         if not self.maxlen:
             self.maxlen = max(len(seq) for seq in sequences)
+
+            with open(f'input_maxlen_x_{self.today}.pkl', 'wb') as f:
+                pickle.dump(self.maxlen, f)
 
         padded_sequences = pad_sequences(sequences, maxlen=self.maxlen)
 
@@ -184,7 +192,7 @@ class JobClassificationModel:
         today = str(date.today()).replace("-", "_")
 
         early_stopping = EarlyStopping(
-            monitor="val_loss", patience=50, restore_best_weights=True
+            monitor="val_loss", patience=100, restore_best_weights=True
         )
 
         checkpoint = ModelCheckpoint(
@@ -196,7 +204,7 @@ class JobClassificationModel:
         self.model.fit(
             x_tr,
             [y_tr1, y_tr2],
-            epochs=50,
+            epochs=200,
             validation_data=(x_t, [y_t1, y_t2]),
             callbacks=[early_stopping, checkpoint],
         )
@@ -224,10 +232,88 @@ class Evaluation:
         accuracy = sum(correct_top_k) / len(correct_top_k)
         return accuracy
 
+    @staticmethod
+    def output_results(step1, step2):
+
+        predictions_step1, y1_test = step1
+        predictions_step2, y2_test = step2
+
+        step1_accuracy = Evaluation.accuracy_analysis(predictions_step1, y1_test)
+        step2_accuracy = Evaluation.accuracy_analysis(predictions_step2, y2_test)
+
+        top3_accuracy_step1 = Evaluation.top_k_accuracy(
+            predictions_step1, np.argmax(y1_test, axis=1), k=3
+        )
+
+        print(f"Step 1 Job Category Accuracy: {step1_accuracy}")
+        print(f"Step 1 Top 3 Job Category Accuracy: {top3_accuracy_step1}")
+        print(f"Step 2 Industry Accuracy: {step2_accuracy}")
+
+    @staticmethod
+    def output_readable_results(predictions_step1, predictions_step2, preprocessor):
+        # todo consider splitting this into process and creating different outputs depending on parameter model = 1 or 2
+        label_mapping_model1 = {
+            idx: value
+            for idx, value in enumerate(preprocessor.label_encoder_y1.classes_)
+        }
+
+        # getting indices for top 1 and 3
+        top1_indices_step1 = np.argsort(predictions_step1, axis=1)[:, -1:]
+        top3_indices_step1 = np.argsort(predictions_step1, axis=1)[:, -3:]
+
+        predicted_labels_step1_top3 = [
+            [label_mapping_model1[idx] for idx in top_indices] for top_indices in top3_indices_step1
+        ]
+
+        predicted_labels_step1_top1 = [
+            [label_mapping_model1[idx] for idx in top_indices] for top_indices in top1_indices_step1
+        ]
+
+        actual_labels_step1 = [
+            [label_mapping_model1[idx] for idx, value in enumerate(true) if value == 1]
+            for true in y1_test
+        ]
+
+        step1_df = pd.DataFrame(
+            {
+                "input": x_test_raw,
+                "top1_predicted_labels": predicted_labels_step1_top1,
+                "top3_predicted_labels": predicted_labels_step1_top3,
+                "actual_labels": actual_labels_step1,
+            }
+        )
+
+        top_indices_step2 = np.argmax(predictions_step2, axis=1)
+
+        label_mapping_model2 = {
+            idx: value
+            for idx, value in enumerate(preprocessor.label_encoder_y2.classes_)
+        }
+
+        predicted_labels_step2 = [
+            label_mapping_model2[idx] for idx in top_indices_step2
+        ]
+
+        step2_df = pd.DataFrame(
+            {
+                "input": x_test_raw,
+                "predicted_label": predicted_labels_step2,
+                "actual_label": [
+                    label_mapping_model2[idx] for idx in np.argmax(y2_test, axis=1)
+                ],
+            }
+        )
+
+        return step1_df, step2_df
+
+
 
 if __name__ == "__main__":
     split = False
 
+    # -------------------------#
+    # Preprocessing
+    # -------------------------#
     preprocessor = DataPreprocessor(filepath="assets/job_title_industry.xlsx")
     df = preprocessor.load_data()
 
@@ -246,15 +332,6 @@ if __name__ == "__main__":
         stratify=df["New Job Category"].values,
     )
 
-    print(
-        x_train_raw.shape,
-        x_test_raw.shape,
-        y1_train.shape,
-        y2_train.shape,
-        y2_test.shape,
-    )
-    print(x_train_raw)
-
     # tokenizing and padding
     x_train = preprocessor.tokenize_and_pad(x_train_raw)
     x_test = preprocessor.tokenize_and_pad(x_test_raw)
@@ -262,134 +339,46 @@ if __name__ == "__main__":
     # glove embedding
     embedding_matrix = preprocessor.load_glove_embeddings("assets/glove.6B.50d.txt")
 
-    # build and train
+
+    # -------------------------#
+    # Building & Training
+    # -------------------------#
     model_builder = JobClassificationModel(
         preprocessor.vocab_size, embedding_matrix, preprocessor.maxlen
     )
     model = model_builder.build_model(y1_train.shape[1], y2_train.shape[1])
     model_builder.train(x_train, y1_train, y2_train, x_test, y1_test, y2_test, split)
 
+
     # -------------------------#
     # Evaluating
     # -------------------------#
-
-    # predict
     predictions_step1, predictions_step2 = model.predict(x_test)
 
-    # analysis
-    step1_accuracy = Evaluation.accuracy_analysis(predictions_step1, y1_test)
-    step2_accuracy = Evaluation.accuracy_analysis(predictions_step2, y2_test)
+    Evaluation.output_results(step1=[predictions_step1, y1_test], step2=[predictions_step2, y2_test])
+    step1_df, step2_df = Evaluation.output_readable_results(predictions_step1, predictions_step2, preprocessor)
 
-    print(f"Step 1 Job Category Accuracy: {step1_accuracy}")
-    print(f"Step 2 Industry Accuracy: {step2_accuracy}")
-
-    # top 3 accuracy
-    top3_accuracy_step1 = Evaluation.top_k_accuracy(
-        predictions_step1, np.argmax(y1_test, axis=1), k=3
-    )
-    print(f"Top-3 Job Category Accuracy: {top3_accuracy_step1}")
-
-    # -------------------------#
-    # Predicted outcome top 1, top 3, threshold
-    # -------------------------#
-
-    label_mapping_model1 = dict(
-        zip(range(len(preprocessor.label_encoder_y1.classes_)), preprocessor.label_encoder_y1.classes_)
-    )
-
-    # getting indices for top 1 and 3
-    top_1_indices = np.argsort(predictions_step1, axis=1)[:, -1:]
-    top_3_indices = np.argsort(predictions_step1, axis=1)[:, -3:]
-
-    predicted_labels_step1_top_1 = np.zeros_like(predictions_step1)
-    predicted_labels_step1_top_3 = np.zeros_like(predictions_step1)
-
-    for i, indices in enumerate(top_1_indices):
-        predicted_labels_step1_top_1[i, indices] = 1
-
-    for i, indices in enumerate(top_3_indices):
-        predicted_labels_step1_top_3[i, indices] = 1
-
-    predicted_labels_step1_top_1_readable = [
-        [label_mapping_model1[idx] for idx, value in enumerate(pred) if value == 1]
-        for pred in predicted_labels_step1_top_1
-    ]
-
-    predicted_labels_step1_top_3_readable = [
-        [label_mapping_model1[idx] for idx, value in enumerate(pred) if value == 1]
-        for pred in predicted_labels_step1_top_3
-    ]
-
-    actual_labels_step1_readable = [
-        [label_mapping_model1[idx] for idx, value in enumerate(true) if value == 1]
-        for true in y1_test
-    ]
-
-    # creating dataframes for top 1 and 3
-    step1_df_top_1 = pd.DataFrame(
-        {
-            "input": x_test_raw,
-            "top_1_predicted_labels": predicted_labels_step1_top_1_readable,
-            "actual_labels": actual_labels_step1_readable,
-        }
-    )
-
-    step1_df_top_3 = pd.DataFrame(
-        {
-            "input": x_test_raw,
-            "top_3_predicted_labels": predicted_labels_step1_top_3_readable,
-            "actual_labels": actual_labels_step1_readable,
-        }
-    )
-
+    # todo don't erase, for later use
     # instead of top 1 and 3 using threshold, same process
-    threshold = 0.5
-    predicted_labels_step1 = (predictions_step1 >= threshold).astype(int)
-
-    predicted_labels_step1_readable = [
-        [label_mapping_model1[idx] for idx, value in enumerate(pred) if value == 1]
-        for pred in predicted_labels_step1
-    ]
-
-    actual_labels_step1_readable = [
-        [label_mapping_model1[idx] for idx, value in enumerate(true) if value == 1]
-        for true in y1_test
-    ]
-
-    actual_labels_step2 = np.argmax(y2_test, axis=1)
-
-    step1_df = pd.DataFrame(
-        {
-            "input": x_test_raw,
-            "predicted_labels": predicted_labels_step1_readable,
-            "actual_labels": actual_labels_step1_readable,
-        }
-    )
-
-
-    # --------------------------------#
-    # Step 2 predictions and labels
-    # --------------------------------#
-
-    predicted_labels_step2 = np.argmax(predictions_step2, axis=1)
-
-    label_mapping_model2 = dict(
-        zip(
-            range(len(preprocessor.label_encoder_y2.classes_)),
-            preprocessor.label_encoder_y2.classes_,
-        )
-    )
-
-    predicted_labels_step2_readable = [
-        label_mapping_model2[idx] for idx in predicted_labels_step2
-    ]
-
-    step2_df = pd.DataFrame(
-        {
-            "input": x_test_raw,
-            "top_1_predicted_label": predicted_labels_step2_readable,
-            "actual_label": [
-                label_mapping_model2[idx] for idx in np.argmax(y2_test, axis=1)
-            ],
-        }
-    )
+    # threshold = 0.5
+    # predicted_labels_step1 = (predictions_step1 >= threshold).astype(int)
+    #
+    # predicted_labels_step1_readable = [
+    #     [label_mapping_model1[idx] for idx, value in enumerate(pred) if value == 1]
+    #     for pred in predicted_labels_step1
+    # ]
+    #
+    # actual_labels_step1_readable = [
+    #     [label_mapping_model1[idx] for idx, value in enumerate(true) if value == 1]
+    #     for true in y1_test
+    # ]
+    #
+    # actual_labels_step2 = np.argmax(y2_test, axis=1)
+    #
+    # step1_df = pd.DataFrame(
+    #     {
+    #         "input": x_test_raw,
+    #         "predicted_labels": predicted_labels_step1_readable,
+    #         "actual_labels": actual_labels_step1_readable,
+    #     }
+    # )
