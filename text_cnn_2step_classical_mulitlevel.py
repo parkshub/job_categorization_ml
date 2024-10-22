@@ -16,12 +16,14 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder, MultiLabelBinarizer
 from sklearn.model_selection import train_test_split
 
+import tensorflow as tf
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
 import keras
 from keras.regularizers import l2
 from keras.utils import to_categorical
 from keras.models import Sequential, Model
-from keras.preprocessing.text import Tokenizer
-from keras.preprocessing.sequence import pad_sequences
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers import Embedding, Conv1D, GlobalMaxPooling1D, Dense, Dropout, Input
 
@@ -31,9 +33,9 @@ class DataPreprocessor:
     This class contains all the functions necessary for importing and preprocessing data.
     """
 
-    def __init__(self, filepath, maxlen=None):
+    def __init__(self, filepath):
         self.filepath = filepath
-        self.maxlen = maxlen
+        self.maxlen = None
         self.vocab_size = None
         self.embedding_dim = 50
         self.tokenizer = None
@@ -67,7 +69,7 @@ class DataPreprocessor:
             df = df[~df["WOW Job title"].str.contains(",")]
             df = df[~df["WOW Job title"].str.contains(" and ")]
 
-        df["New Job Category"] = df["New Job Category"].apply(lambda x: x.SPLIT(","))
+        df["New Job Category"] = df["New Job Category"].apply(lambda x: x.split(","))
         df["New Job Category"] = df["New Job Category"].apply(
             lambda x: [item.strip() for item in x]
         )
@@ -78,18 +80,20 @@ class DataPreprocessor:
 
         return df
 
-    def encode_labels(self, df, col_name):
+    def encode_labels(self, df: pd.DataFrame, col_name: [str]):
         """
         This function encodes the labels for each model using one-hot-encoding.
         However, model 1 is a multi-label categorization model and can contain more than one 1s.
         Model 1 encoded labels: 0, 0, 1, 0, 1
         Model 2 encoded labels: 0, 0, 1, 0, 0
         """
+        label_encoder_y = None
         if col_name == "New Job Category":
             df[col_name] = df[col_name].apply(
                 lambda x: x if isinstance(x, list) else literal_eval(x)
             )
             self.label_encoder_y1 = MultiLabelBinarizer()
+            # label_encoder_y = self.label_encoder_y1
             y_encoded = self.label_encoder_y1.fit_transform(df[col_name])
 
             with open(f"label_encoder_y1_{self.today}.pkl", "wb") as f:
@@ -97,13 +101,14 @@ class DataPreprocessor:
 
         else:
             self.label_encoder_y2 = LabelEncoder()
-            y_encoded = self.label_encoder_y2.fit_transform(df[col_name])
-            y_encoded = to_categorical(y_encoded)
+            # label_encoder_y = self.label_encoder_y2
+            y_encoded = self.label_encoder_y2.fit_transform(df[col_name]) # this transforms to integers
+            y_encoded = to_categorical(y_encoded) # this transforms to one hot encoding
 
             with open(f"label_encoder_y2_{self.today}.pkl", "wb") as f:
                 pickle.dump(self.label_encoder_y2, f)
 
-        return y_encoded, self.label_encoder_y2
+        return y_encoded, self.label_encoder_y1, self.label_encoder_y2
 
     def tokenize_and_pad(self, x):
         """
@@ -353,65 +358,65 @@ class Evaluation:
         )
 
         return df1, df2
-
-def main():
-    SPLIT = False
-
-    # -------------------------#
-    # Preprocessing
-    # -------------------------#
-    preprocessor = DataPreprocessor(filepath="assets/job_title_industry.xlsx")
-    job_industry_df = preprocessor.load_data()
-
-    y_hot_encoded_model1, label_encoder_model1 = preprocessor.encode_labels(
-        job_industry_df, "New Job Category"
-    )
-    y_hot_encoded_model2, label_encoder_model2 = preprocessor.encode_labels(
-        job_industry_df, "New Industry Category"
-    )
-
-    x_train_raw, x_test_raw, y1_train, y1_test, y2_train, y2_test = train_test_split(
-        job_industry_df["WOW Job title"],
-        y_hot_encoded_model1,
-        y_hot_encoded_model2,
-        test_size=0.2,
-        stratify=job_industry_df["New Job Category"].values,
-    )
-
-    x_train = preprocessor.tokenize_and_pad(x_train_raw)
-    x_test = preprocessor.tokenize_and_pad(x_test_raw)
-
-    glove_embedding_matrix = preprocessor.load_glove_embeddings(
-        "assets/glove.6B.50d.txt"
-    )
-
-    # -------------------------#
-    # Building & Training
-    # -------------------------#
-    model_builder = JobClassificationModel(
-        preprocessor.vocab_size, glove_embedding_matrix, preprocessor.maxlen
-    )
-    model = model_builder.build_model(y1_train.shape[1], y2_train.shape[1])
-    model_builder.train(
-        [x_train, y1_train, y2_train], [x_test, y1_test, y2_test], SPLIT
-    )
-
-    # -------------------------#
-    # Evaluating
-    # -------------------------#
-    predictions_step1, predictions_step2 = model.predict(x_test)
-
-    Evaluation.output_results(
-        step1=[predictions_step1, y1_test], step2=[predictions_step2, y2_test]
-    )
-
-    step1_df, step2_df = Evaluation.output_readable_results(
-        predictions_step1, predictions_step2, preprocessor, x_test_raw
-    )
+#
+# def main():
+#     SPLIT = False
+#
+#     # -------------------------#
+#     # Preprocessing
+#     # -------------------------#
+#     preprocessor = DataPreprocessor(filepath="assets/job_title_industry.xlsx")
+#     job_industry_df = preprocessor.load_data()
+#
+#     y_hot_encoded_model1, label_encoder_model1 = preprocessor.encode_labels(
+#         job_industry_df, "New Job Category"
+#     )
+#     y_hot_encoded_model2, label_encoder_model2 = preprocessor.encode_labels(
+#         job_industry_df, "New Industry Category"
+#     )
+#
+#     x_train_raw, x_test_raw, y1_train, y1_test, y2_train, y2_test = train_test_split(
+#         job_industry_df["WOW Job title"],
+#         y_hot_encoded_model1,
+#         y_hot_encoded_model2,
+#         test_size=0.2,
+#         stratify=job_industry_df["New Job Category"].values,
+#     )
+#
+#     x_train = preprocessor.tokenize_and_pad(x_train_raw)
+#     x_test = preprocessor.tokenize_and_pad(x_test_raw)
+#
+#     glove_embedding_matrix = preprocessor.load_glove_embeddings(
+#         "assets/glove.6B.50d.txt"
+#     )
+#
+#     # -------------------------#
+#     # Building & Training
+#     # -------------------------#
+#     model_builder = JobClassificationModel(
+#         preprocessor.vocab_size, glove_embedding_matrix, preprocessor.maxlen
+#     )
+#     model = model_builder.build_model(y1_train.shape[1], y2_train.shape[1])
+#     model_builder.train(
+#         [x_train, y1_train, y2_train], [x_test, y1_test, y2_test], SPLIT
+#     )
+#
+#     # -------------------------#
+#     # Evaluating
+#     # -------------------------#
+#     predictions_step1, predictions_step2 = model.predict(x_test)
+#
+#     Evaluation.output_results(
+#         step1=[predictions_step1, y1_test], step2=[predictions_step2, y2_test]
+#     )
+#
+#     step1_df, step2_df = Evaluation.output_readable_results(
+#         predictions_step1, predictions_step2, preprocessor, x_test_raw
+#     )
 
 
 if __name__ == "__main__":
-    main()
+    # main()
     SPLIT = False
 
     # -------------------------#
@@ -420,10 +425,10 @@ if __name__ == "__main__":
     preprocessor = DataPreprocessor(filepath="assets/job_title_industry.xlsx")
     job_industry_df = preprocessor.load_data()
 
-    y_hot_encoded_model1, label_encoder_model1 = preprocessor.encode_labels(
+    y_hot_encoded_model1, label_encoder_model1, _ = preprocessor.encode_labels(
         job_industry_df, "New Job Category"
     )
-    y_hot_encoded_model2, label_encoder_model2 = preprocessor.encode_labels(
+    y_hot_encoded_model2, _, label_encoder_model2 = preprocessor.encode_labels(
         job_industry_df, "New Industry Category"
     )
 

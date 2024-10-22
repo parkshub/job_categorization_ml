@@ -87,8 +87,7 @@ def main(user_input):
     predictions_step1, predictions_step2 = model.predict(padded_sequence)
 
     label_mapping_model1 = dict(enumerate(model_builder.label_encoder_y1.classes_))
-
-    label_mapping_model2 =  dict(enumerate(model_builder.label_encoder_y2.classes_))
+    label_mapping_model2 = dict(enumerate(model_builder.label_encoder_y2.classes_))
 
     top1_indices_step1 = np.argsort(predictions_step1, axis=1)[:, -1:]
     top3_indices_step1 = np.argsort(predictions_step1, axis=1)[:, -3:]
