@@ -6,13 +6,21 @@ the results.
 """
 
 # pylint: disable=import-error
+import os
 import pickle
 from datetime import date
 from ast import literal_eval
 
+import gspread
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+
 import pandas as pd
 import numpy as np
 
+from sklearn.metrics import f1_score
 from sklearn.preprocessing import LabelEncoder, MultiLabelBinarizer
 from sklearn.model_selection import train_test_split
 
@@ -87,7 +95,6 @@ class DataPreprocessor:
         Model 1 encoded labels: 0, 0, 1, 0, 1
         Model 2 encoded labels: 0, 0, 1, 0, 0
         """
-        label_encoder_y = None
         if col_name == "New Job Category":
             df[col_name] = df[col_name].apply(
                 lambda x: x if isinstance(x, list) else literal_eval(x)
@@ -102,8 +109,10 @@ class DataPreprocessor:
         else:
             self.label_encoder_y2 = LabelEncoder()
             # label_encoder_y = self.label_encoder_y2
-            y_encoded = self.label_encoder_y2.fit_transform(df[col_name]) # this transforms to integers
-            y_encoded = to_categorical(y_encoded) # this transforms to one hot encoding
+            y_encoded = self.label_encoder_y2.fit_transform(
+                df[col_name]
+            )  # this transforms to integers
+            y_encoded = to_categorical(y_encoded)  # this transforms to one hot encoding
 
             with open(f"label_encoder_y2_{self.today}.pkl", "wb") as f:
                 pickle.dump(self.label_encoder_y2, f)
@@ -271,6 +280,16 @@ class Evaluation:
         return accuracy
 
     @staticmethod
+    def f1_analysis(predictions, y_true, average='weighted'):
+        """
+        This function calculates the F1 score of the predictions.
+        """
+        predicted_labels = np.argmax(predictions, axis=1)
+        actual_labels = np.argmax(y_true, axis=1)
+        f1 = f1_score(actual_labels, predicted_labels, average=average)
+        return f1
+
+    @staticmethod
     def top_k_accuracy(predictions, y_true, k=3):
         """
         This function calculates the accuracy in terms of whether the model was able to
@@ -295,13 +314,51 @@ class Evaluation:
         step1_accuracy = Evaluation.accuracy_analysis(pred_step1, y1)
         step2_accuracy = Evaluation.accuracy_analysis(pred_step2, y2)
 
-        top3_accuracy_step1 = Evaluation.top_k_accuracy(
+        step1_f1 = Evaluation.f1_analysis(pred_step1, y1)
+        step2_f1 = Evaluation.f1_analysis(pred_step2, y2)
+
+        top3_step1_accuracy = Evaluation.top_k_accuracy(
             pred_step1, np.argmax(y1, axis=1), k=3
         )
 
         print(f"Step 1 Job Category Accuracy: {step1_accuracy}")
-        print(f"Step 1 Top 3 Job Category Accuracy: {top3_accuracy_step1}")
+        print(f"Step 1 F1 Score: {step1_f1}")
+        print(f"Step 1 Top 3 Job Category Accuracy: {top3_step1_accuracy}")
         print(f"Step 2 Industry Accuracy: {step2_accuracy}")
+        print(f"Step 2 F1 Score: {step2_f1}")
+
+    # (s1_accuracy, s1_f1, top3_s1_accuracy, s2_accuracy, s2_f1):
+
+    @staticmethod
+    def authenticate_google_sheets():
+        SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+        creds = None
+        # The file token.json stores the user's access and refresh tokens, and is
+        # created automatically when the authorization flow completes for the first time.
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        # If there are no (valid) credentials available, let the user log in.
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+            # Save the credentials for the next run
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
+        return creds
+
+    @staticmethod
+    def append_to_google_sheet(service, spreadsheet_id, range_name, values):
+        body = {
+            'values': values
+        }
+        result = service.spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id, range=range_name,
+            valueInputOption='USER_ENTERED', body=body).execute()
+        print(f"{result.get('updates').get('updatedCells')} cells appended.")
 
     @staticmethod
     def output_readable_results(pred_step1, pred_step2, pp, original_inputs):
@@ -358,61 +415,6 @@ class Evaluation:
         )
 
         return df1, df2
-#
-# def main():
-#     SPLIT = False
-#
-#     # -------------------------#
-#     # Preprocessing
-#     # -------------------------#
-#     preprocessor = DataPreprocessor(filepath="assets/job_title_industry.xlsx")
-#     job_industry_df = preprocessor.load_data()
-#
-#     y_hot_encoded_model1, label_encoder_model1 = preprocessor.encode_labels(
-#         job_industry_df, "New Job Category"
-#     )
-#     y_hot_encoded_model2, label_encoder_model2 = preprocessor.encode_labels(
-#         job_industry_df, "New Industry Category"
-#     )
-#
-#     x_train_raw, x_test_raw, y1_train, y1_test, y2_train, y2_test = train_test_split(
-#         job_industry_df["WOW Job title"],
-#         y_hot_encoded_model1,
-#         y_hot_encoded_model2,
-#         test_size=0.2,
-#         stratify=job_industry_df["New Job Category"].values,
-#     )
-#
-#     x_train = preprocessor.tokenize_and_pad(x_train_raw)
-#     x_test = preprocessor.tokenize_and_pad(x_test_raw)
-#
-#     glove_embedding_matrix = preprocessor.load_glove_embeddings(
-#         "assets/glove.6B.50d.txt"
-#     )
-#
-#     # -------------------------#
-#     # Building & Training
-#     # -------------------------#
-#     model_builder = JobClassificationModel(
-#         preprocessor.vocab_size, glove_embedding_matrix, preprocessor.maxlen
-#     )
-#     model = model_builder.build_model(y1_train.shape[1], y2_train.shape[1])
-#     model_builder.train(
-#         [x_train, y1_train, y2_train], [x_test, y1_test, y2_test], SPLIT
-#     )
-#
-#     # -------------------------#
-#     # Evaluating
-#     # -------------------------#
-#     predictions_step1, predictions_step2 = model.predict(x_test)
-#
-#     Evaluation.output_results(
-#         step1=[predictions_step1, y1_test], step2=[predictions_step2, y2_test]
-#     )
-#
-#     step1_df, step2_df = Evaluation.output_readable_results(
-#         predictions_step1, predictions_step2, preprocessor, x_test_raw
-#     )
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ and outputs its predictions.
 # pylint: disable=import-error
 import sys
 import pickle
+from datetime import date
 import numpy as np
 
 import keras
@@ -19,7 +20,7 @@ class ModelBuilder:
     and the model itself.
     """
 
-    def __init__(self, date="2024_10_08"):
+    def __init__(self, date=str(date.today()).replace("-", "_")):
         self.date = date
         self.tokenizer = None
         self.maxlen = None
