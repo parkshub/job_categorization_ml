@@ -84,13 +84,11 @@ class DataPreprocessor:
 
         return df
 
-    def encode_labels(self, df: pd.DataFrame, col_name: str) -> (
-            tuple[
-                np.ndarray,
-                sklearn.preprocessing.MultiLabelBinarizer | None,
-                sklearn.preprocessing.LabelEncoder | None
-            ]
-    ):
+    def encode_labels(self, df: pd.DataFrame, col_name: str) -> tuple[
+        np.ndarray,
+        sklearn.preprocessing.MultiLabelBinarizer | None,
+        sklearn.preprocessing.LabelEncoder | None,
+    ]:
         """
         This function encodes the labels for each model using one-hot-encoding.
         However, model 1 is a multi-label categorization model and can contain more than one 1s.
@@ -226,7 +224,12 @@ class JobClassificationModel:
         )
         return self.model
 
-    def train(self, train_set: list[np.ndarray], test_set: list[np.ndarray], split_param: bool = False):
+    def train(
+        self,
+        train_set: list[np.ndarray],
+        test_set: list[np.ndarray],
+        split_param: bool = False,
+    ):
         """
         This function trains the model. It's set to train for 200 epochs, but stops if validation
         loss doesn't improve for 100 epochs. When training completes, it exports the weights
@@ -257,13 +260,6 @@ class JobClassificationModel:
             callbacks=[early_stopping, checkpoint],
         )
 
-    # def evaluate(self, x_t, y_t1, y_t2):
-    #     """
-    #     This function simply evaluates the model.
-    #     """
-    #     results = self.model.evaluate(x_t, [y_t1, y_t2])
-    #     print(f"Evaluation results: {results}")
-
 
 class Evaluation:
     """
@@ -282,7 +278,9 @@ class Evaluation:
         return accuracy
 
     @staticmethod
-    def f1_analysis(predictions: np.ndarray, y_true: np.ndarray, average: str = "weighted") -> float:
+    def f1_analysis(
+        predictions: np.ndarray, y_true: np.ndarray, average: str = "weighted"
+    ) -> float:
         """
         This function calculates the F1 score of the predictions.
         """
@@ -292,7 +290,9 @@ class Evaluation:
         return f1
 
     @staticmethod
-    def top_k_accuracy(predictions: np.ndarray, y_true: np.ndarray, k: int = 3) -> float:
+    def top_k_accuracy(
+        predictions: np.ndarray, y_true: np.ndarray, k: int = 3
+    ) -> float:
         """
         This function calculates the accuracy in terms of whether the model was able to
         guess the correct label within the top three predictions.
@@ -313,10 +313,7 @@ class Evaluation:
         file.write(text + "\n")
 
     @staticmethod
-    def output_results(
-            step1: list[np.ndarray],
-            step2: list[np.ndarray]
-    ):
+    def output_results(step1: list[np.ndarray], step2: list[np.ndarray]):
         """
         This function uses the previous two functions to create a comprehensive analysis
         of how the model performed.
@@ -352,10 +349,10 @@ class Evaluation:
 
     @staticmethod
     def output_readable_results(
-            pred_step1: np.ndarray,
-            pred_step2: np.ndarray,
-            pp: DataPreprocessor,
-            original_inputs: pd.Series
+        pred_step1: np.ndarray,
+        pred_step2: np.ndarray,
+        pp: DataPreprocessor,
+        original_inputs: pd.Series,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         This function converts the input and outputs into a more readable format
