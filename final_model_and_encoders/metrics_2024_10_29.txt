@@ -1,0 +1,5 @@
+Step 1 Job Category Accuracy: 0.6568627450980392
+Step 1 F1 Score: 0.6408566416669662
+Step 1 Top 3 Job Category Accuracy: 0.9215686274509803
+Step 2 Industry Accuracy: 0.8986928104575164
+Step 2 F1 Score: 0.8922956804295546

@@ -6,16 +6,10 @@ the results.
 """
 
 # pylint: disable=import-error
-import os
+import json
 import pickle
 from datetime import date
 from ast import literal_eval
-
-import gspread
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
 
 import pandas as pd
 import numpy as np
@@ -24,14 +18,13 @@ from sklearn.metrics import f1_score
 from sklearn.preprocessing import LabelEncoder, MultiLabelBinarizer
 from sklearn.model_selection import train_test_split
 
-import tensorflow as tf
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-import keras
 from keras.regularizers import l2
 from keras.utils import to_categorical
 from keras.models import Sequential, Model
+from keras.losses import CategoricalFocalCrossentropy
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers import Embedding, Conv1D, GlobalMaxPooling1D, Dense, Dropout, Input
 
@@ -200,7 +193,7 @@ class JobClassificationModel:
         model1.add(Conv1D(128, 3, activation="relu"))
         model1.add(GlobalMaxPooling1D())
         model1.add(Dense(64, activation="relu", kernel_regularizer=l2(0.01)))
-        model1.add(Dropout(0.4))
+        model1.add(Dropout(0.2))
         model1.add(Dense(y_tr1_shape, activation="sigmoid"))
 
         # model 2
@@ -217,7 +210,7 @@ class JobClassificationModel:
         self.model.compile(
             optimizer="adam",
             loss=[
-                keras.losses.CategoricalFocalCrossentropy(),
+                CategoricalFocalCrossentropy(),
                 "categorical_crossentropy",
             ],
             metrics=["accuracy", "accuracy"],
@@ -237,8 +230,12 @@ class JobClassificationModel:
         name_prefix = ["", "split_"]
         today = str(date.today()).replace("-", "_")
 
+        # early_stopping = EarlyStopping(
+        #     monitor="val_loss", patience=100, restore_best_weights=True
+        # )
+
         early_stopping = EarlyStopping(
-            monitor="val_loss", patience=100, restore_best_weights=True
+            monitor="val_loss", patience=200, restore_best_weights=True
         )
 
         checkpoint = ModelCheckpoint(
@@ -280,7 +277,7 @@ class Evaluation:
         return accuracy
 
     @staticmethod
-    def f1_analysis(predictions, y_true, average='weighted'):
+    def f1_analysis(predictions, y_true, average="weighted"):
         """
         This function calculates the F1 score of the predictions.
         """
@@ -303,6 +300,14 @@ class Evaluation:
         return accuracy
 
     @staticmethod
+    def print_and_write(file, text):
+        """
+        Prints results to console and writes the results to a .txt file
+        """
+        print(text)
+        file.write(text + "\n")
+
+    @staticmethod
     def output_results(step1, step2):
         """
         This function uses the previous two functions to create a comprehensive analysis
@@ -321,44 +326,19 @@ class Evaluation:
             pred_step1, np.argmax(y1, axis=1), k=3
         )
 
-        print(f"Step 1 Job Category Accuracy: {step1_accuracy}")
-        print(f"Step 1 F1 Score: {step1_f1}")
-        print(f"Step 1 Top 3 Job Category Accuracy: {top3_step1_accuracy}")
-        print(f"Step 2 Industry Accuracy: {step2_accuracy}")
-        print(f"Step 2 F1 Score: {step2_f1}")
+        today = str(date.today()).replace("-", "_")
 
-    # (s1_accuracy, s1_f1, top3_s1_accuracy, s2_accuracy, s2_f1):
+        file = open(f"results_{today}.txt", "w", encoding="utf-8")
 
-    @staticmethod
-    def authenticate_google_sheets():
-        SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-        creds = None
-        # The file token.json stores the user's access and refresh tokens, and is
-        # created automatically when the authorization flow completes for the first time.
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-        # If there are no (valid) credentials available, let the user log in.
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    'credentials.json', SCOPES)
-                creds = flow.run_local_server(port=0)
-            # Save the credentials for the next run
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
-        return creds
-
-    @staticmethod
-    def append_to_google_sheet(service, spreadsheet_id, range_name, values):
-        body = {
-            'values': values
-        }
-        result = service.spreadsheets().values().append(
-            spreadsheetId=spreadsheet_id, range=range_name,
-            valueInputOption='USER_ENTERED', body=body).execute()
-        print(f"{result.get('updates').get('updatedCells')} cells appended.")
+        Evaluation.print_and_write(
+            file, f"Step 1 Job Category Accuracy: {step1_accuracy}"
+        )
+        Evaluation.print_and_write(file, f"Step 1 F1 Score: {step1_f1}")
+        Evaluation.print_and_write(
+            file, f"Step 1 Top 3 Job Category Accuracy: {top3_step1_accuracy}"
+        )
+        Evaluation.print_and_write(file, f"Step 2 Industry Accuracy: {step2_accuracy}")
+        Evaluation.print_and_write(file, f"Step 2 F1 Score: {step2_f1}")
 
     @staticmethod
     def output_readable_results(pred_step1, pred_step2, pp, original_inputs):
@@ -413,6 +393,14 @@ class Evaluation:
                 ],
             }
         )
+
+        today = str(date.today()).replace("-", "_")
+
+        with open(f"step_1_results_{today}.json", "w", encoding="utf-8") as f:
+            json.dump(df1.to_json(orient="records"), f)
+
+        with open(f"step_2_results_{today}.json", "w", encoding="utf-8") as f:
+            json.dump(df2.to_json(orient="records"), f)
 
         return df1, df2
 
