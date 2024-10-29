@@ -9,11 +9,14 @@ the results.
 import json
 import pickle
 from datetime import date
+from typing import TextIO
 from ast import literal_eval
 
+import keras
 import pandas as pd
 import numpy as np
 
+import sklearn
 from sklearn.metrics import f1_score
 from sklearn.preprocessing import LabelEncoder, MultiLabelBinarizer
 from sklearn.model_selection import train_test_split
@@ -34,7 +37,7 @@ class DataPreprocessor:
     This class contains all the functions necessary for importing and preprocessing data.
     """
 
-    def __init__(self, filepath):
+    def __init__(self, filepath: str):
         self.filepath = filepath
         self.maxlen = None
         self.vocab_size = None
@@ -46,7 +49,7 @@ class DataPreprocessor:
         self.label_encoder_y2 = None
         self.today = str(date.today()).replace("-", "_")
 
-    def load_data(self, split_param=False):
+    def load_data(self, split_param: bool = False) -> pd.DataFrame:
         """
         This function loads in the data from an Excel sheet and drops missing rows,
         splits job categories by ',' and removes job categories with less than 2 entries.
@@ -81,7 +84,13 @@ class DataPreprocessor:
 
         return df
 
-    def encode_labels(self, df: pd.DataFrame, col_name: [str]):
+    def encode_labels(self, df: pd.DataFrame, col_name: str) -> (
+            tuple[
+                np.ndarray,
+                sklearn.preprocessing.MultiLabelBinarizer | None,
+                sklearn.preprocessing.LabelEncoder | None
+            ]
+    ):
         """
         This function encodes the labels for each model using one-hot-encoding.
         However, model 1 is a multi-label categorization model and can contain more than one 1s.
@@ -112,7 +121,7 @@ class DataPreprocessor:
 
         return y_encoded, self.label_encoder_y1, self.label_encoder_y2
 
-    def tokenize_and_pad(self, x):
+    def tokenize_and_pad(self, x: pd.Series) -> np.ndarray:
         """
         This function's main purpose is to tokenize and pad the results. If the class doesn't
         already have a tokenizer, it'll assume x belongs to the training set and will fit and
@@ -141,7 +150,7 @@ class DataPreprocessor:
         self.vocab_size = len(self.word_index) + 1
         return padded_sequences
 
-    def load_glove_embeddings(self, glove_file):
+    def load_glove_embeddings(self, glove_file: str) -> np.ndarray:
         """
         This function loads pre-trained GloVe embeddings from the famous Stanford set and
         creates an embedding matrix for the model and maps it to the current Tokenizer's vocabulary.
@@ -169,13 +178,13 @@ class JobClassificationModel:
     This class builds the 2 separate models, concatenates them and trains them.
     """
 
-    def __init__(self, vocab_size, embedding_matrix, maxlen):
+    def __init__(self, vocab_size: int, embedding_matrix: np.ndarray, maxlen: int):
         self.vocab_size = vocab_size
         self.embedding_matrix = embedding_matrix
         self.maxlen = maxlen
         self.model = None
 
-    def build_model(self, y_tr1_shape, y_tr2_shape):
+    def build_model(self, y_tr1_shape: int, y_tr2_shape: int) -> keras.models.Model:
         """
         This function builds the models, combines them and compiles them.
         """
@@ -217,7 +226,7 @@ class JobClassificationModel:
         )
         return self.model
 
-    def train(self, train_set, test_set, split_param=False):
+    def train(self, train_set: list[np.ndarray], test_set: list[np.ndarray], split_param: bool = False):
         """
         This function trains the model. It's set to train for 200 epochs, but stops if validation
         loss doesn't improve for 100 epochs. When training completes, it exports the weights
@@ -229,10 +238,6 @@ class JobClassificationModel:
 
         name_prefix = ["", "split_"]
         today = str(date.today()).replace("-", "_")
-
-        # early_stopping = EarlyStopping(
-        #     monitor="val_loss", patience=100, restore_best_weights=True
-        # )
 
         early_stopping = EarlyStopping(
             monitor="val_loss", patience=200, restore_best_weights=True
@@ -252,12 +257,12 @@ class JobClassificationModel:
             callbacks=[early_stopping, checkpoint],
         )
 
-    def evaluate(self, x_t, y_t1, y_t2):
-        """
-        This function simply evaluates the model.
-        """
-        results = self.model.evaluate(x_t, [y_t1, y_t2])
-        print(f"Evaluation results: {results}")
+    # def evaluate(self, x_t, y_t1, y_t2):
+    #     """
+    #     This function simply evaluates the model.
+    #     """
+    #     results = self.model.evaluate(x_t, [y_t1, y_t2])
+    #     print(f"Evaluation results: {results}")
 
 
 class Evaluation:
@@ -266,7 +271,7 @@ class Evaluation:
     """
 
     @staticmethod
-    def accuracy_analysis(predictions, y_true):
+    def accuracy_analysis(predictions: np.ndarray, y_true: np.ndarray) -> float:
         """
         This function calculates the accuracy of the predictions.
         """
@@ -277,7 +282,7 @@ class Evaluation:
         return accuracy
 
     @staticmethod
-    def f1_analysis(predictions, y_true, average="weighted"):
+    def f1_analysis(predictions: np.ndarray, y_true: np.ndarray, average: str = "weighted") -> float:
         """
         This function calculates the F1 score of the predictions.
         """
@@ -287,7 +292,7 @@ class Evaluation:
         return f1
 
     @staticmethod
-    def top_k_accuracy(predictions, y_true, k=3):
+    def top_k_accuracy(predictions: np.ndarray, y_true: np.ndarray, k: int = 3) -> float:
         """
         This function calculates the accuracy in terms of whether the model was able to
         guess the correct label within the top three predictions.
@@ -300,7 +305,7 @@ class Evaluation:
         return accuracy
 
     @staticmethod
-    def print_and_write(file, text):
+    def print_and_write(file: TextIO, text: str):
         """
         Prints results to console and writes the results to a .txt file
         """
@@ -308,7 +313,10 @@ class Evaluation:
         file.write(text + "\n")
 
     @staticmethod
-    def output_results(step1, step2):
+    def output_results(
+            step1: list[np.ndarray],
+            step2: list[np.ndarray]
+    ):
         """
         This function uses the previous two functions to create a comprehensive analysis
         of how the model performed.
@@ -340,8 +348,15 @@ class Evaluation:
         Evaluation.print_and_write(file, f"Step 2 Industry Accuracy: {step2_accuracy}")
         Evaluation.print_and_write(file, f"Step 2 F1 Score: {step2_f1}")
 
+        file.close()
+
     @staticmethod
-    def output_readable_results(pred_step1, pred_step2, pp, original_inputs):
+    def output_readable_results(
+            pred_step1: np.ndarray,
+            pred_step2: np.ndarray,
+            pp: DataPreprocessor,
+            original_inputs: pd.Series
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         This function converts the input and outputs into a more readable format
         and exports it to a dataframe.
@@ -406,7 +421,6 @@ class Evaluation:
 
 
 if __name__ == "__main__":
-    # main()
     SPLIT = False
 
     # -------------------------#

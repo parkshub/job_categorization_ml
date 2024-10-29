@@ -10,7 +10,7 @@ from datetime import date
 import numpy as np
 
 import keras
-from keras.models import load_model
+from keras.models import load_model, Model
 from keras.preprocessing.sequence import pad_sequences
 
 
@@ -20,14 +20,14 @@ class ModelBuilder:
     and the model itself.
     """
 
-    def __init__(self, date=str(date.today()).replace("-", "_")):
+    def __init__(self, date: str = str(date.today()).replace("-", "_")):
         self.date = date
         self.tokenizer = None
         self.maxlen = None
         self.label_encoder_y1 = None
         self.label_encoder_y2 = None
 
-    def load_model(self):
+    def load_model(self) -> keras.models.Model:
         """
         This function loads in the model.
         """
@@ -72,7 +72,7 @@ class ModelBuilder:
             self.label_encoder_y2 = pickle.load(f)
 
 
-def main(user_input):
+def main(user_input: str):
     """
     This function is the main function. It loads the model and its components.
     Using the model, it categorizes the input provided by the user.
