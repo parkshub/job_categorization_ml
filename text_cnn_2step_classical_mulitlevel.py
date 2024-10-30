@@ -100,7 +100,6 @@ class DataPreprocessor:
                 lambda x: x if isinstance(x, list) else literal_eval(x)
             )
             self.label_encoder_y1 = MultiLabelBinarizer()
-            # label_encoder_y = self.label_encoder_y1
             y_encoded = self.label_encoder_y1.fit_transform(df[col_name])
 
             with open(f"label_encoder_y1_{self.today}.pkl", "wb") as f:
@@ -108,11 +107,10 @@ class DataPreprocessor:
 
         else:
             self.label_encoder_y2 = LabelEncoder()
-            # label_encoder_y = self.label_encoder_y2
             y_encoded = self.label_encoder_y2.fit_transform(
                 df[col_name]
-            )  # this transforms to integers
-            y_encoded = to_categorical(y_encoded)  # this transforms to one hot encoding
+            )
+            y_encoded = to_categorical(y_encoded)
 
             with open(f"label_encoder_y2_{self.today}.pkl", "wb") as f:
                 pickle.dump(self.label_encoder_y2, f)
