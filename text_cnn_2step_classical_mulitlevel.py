@@ -65,7 +65,7 @@ class DataPreprocessor:
             subset=["WOW Job title", "New Job Category", "New Industry Category"],
             inplace=True,
         )
-        df = df[["WOW Job title", "New Job Category", "New Industry Category"]]
+        df = df[["WOW Job title", "WOW Industry", "New Job Category", "New Industry Category"]]
 
         if split_param:
             df = df[~df["WOW Job title"].str.contains("/")]
@@ -331,7 +331,7 @@ class Evaluation:
 
         today = str(date.today()).replace("-", "_")
 
-        file = open(f"results_{today}.txt", "w", encoding="utf-8")
+        file = open(f"metrics_{today}.txt", "w", encoding="utf-8")
 
         Evaluation.print_and_write(
             file, f"Step 1 Job Category Accuracy: {step1_accuracy}"
@@ -351,7 +351,9 @@ class Evaluation:
         pred_step2: np.ndarray,
         pp: DataPreprocessor,
         original_inputs: pd.Series,
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        original_titles: pd.Series,
+        original_industries: pd.Series,
+    ) -> pd.DataFrame:
         """
         This function converts the input and outputs into a more readable format
         and exports it to a dataframe.
@@ -380,9 +382,11 @@ class Evaluation:
         df1 = pd.DataFrame(
             {
                 "input": original_inputs,
+                "WOW Job title": original_titles,
+                "WOW Industry": original_industries,
                 "top1_predicted_labels": predicted_labels_step1_top1,
                 "top3_predicted_labels": predicted_labels_step1_top3,
-                "actual_labels": actual_labels_step1,
+                "actual_labels_step1": actual_labels_step1,
             }
         )
 
@@ -397,22 +401,33 @@ class Evaluation:
         df2 = pd.DataFrame(
             {
                 "input": original_inputs,
+                # "WOW Job title": original_titles,
+                # "WOW Industry": original_industries,
                 "predicted_label": predicted_labels_step2,
-                "actual_label": [
+                "actual_labels_step2": [
                     label_mapping_model2[idx] for idx in np.argmax(y2_test, axis=1)
                 ],
             }
         )
 
+        merged_df = pd.concat([df1, df2.drop(columns=["input"])], axis=1)
+
         today = str(date.today()).replace("-", "_")
 
-        with open(f"step_1_results_{today}.json", "w", encoding="utf-8") as f:
-            json.dump(df1.to_json(orient="records"), f)
+        with open(f"merged_results_{today}.json", "w", encoding="utf-8") as f:
+            json.dump(merged_df.to_json(orient="records"), f)
 
-        with open(f"step_2_results_{today}.json", "w", encoding="utf-8") as f:
-            json.dump(df2.to_json(orient="records"), f)
+        return merged_df
 
-        return df1, df2
+        # today = str(date.today()).replace("-", "_")
+        #
+        # with open(f"step_1_results_{today}.json", "w", encoding="utf-8") as f:
+        #     json.dump(df1.to_json(orient="records"), f)
+        #
+        # with open(f"step_2_results_{today}.json", "w", encoding="utf-8") as f:
+        #     json.dump(df2.to_json(orient="records"), f)
+        #
+        # return df1, df2
 
 
 if __name__ == "__main__":
@@ -431,6 +446,7 @@ if __name__ == "__main__":
         job_industry_df, "New Industry Category"
     )
 
+
     x_train_raw, x_test_raw, y1_train, y1_test, y2_train, y2_test = train_test_split(
         job_industry_df["WOW Job title"],
         y_hot_encoded_model1,
@@ -438,6 +454,9 @@ if __name__ == "__main__":
         test_size=0.2,
         stratify=job_industry_df["New Job Category"].values,
     )
+
+    original_titles = job_industry_df.loc[x_test_raw.index, "WOW Job title"]
+    original_industries = job_industry_df.loc[x_test_raw.index, "WOW Industry"]
 
     x_train = preprocessor.tokenize_and_pad(x_train_raw)
     x_test = preprocessor.tokenize_and_pad(x_test_raw)
@@ -466,6 +485,11 @@ if __name__ == "__main__":
         step1=[predictions_step1, y1_test], step2=[predictions_step2, y2_test]
     )
 
-    step1_df, step2_df = Evaluation.output_readable_results(
-        predictions_step1, predictions_step2, preprocessor, x_test_raw
+    merged_df = Evaluation.output_readable_results(
+        predictions_step1,
+        predictions_step2,
+        preprocessor,
+        x_test_raw,
+        original_titles,
+        original_industries
     )
