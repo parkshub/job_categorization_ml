@@ -20,7 +20,7 @@ class ModelBuilder:
     and the model itself.
     """
 
-    def __init__(self, date: str = str(date.today()).replace("-", "_")):
+    def __init__(self, date):
         self.date = date
         self.tokenizer = None
         self.maxlen = None
@@ -78,7 +78,7 @@ def main(user_input: str):
     Using the model, it categorizes the input provided by the user.
     """
 
-    model_builder = ModelBuilder()
+    model_builder = ModelBuilder(date="2024_10_29")
     model_builder.load_pickle()
     model = model_builder.load_model()
 
